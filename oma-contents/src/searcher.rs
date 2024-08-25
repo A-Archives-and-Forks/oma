@@ -11,6 +11,7 @@ use std::{
     thread::{self},
 };
 
+use aho_corasick::AhoCorasick;
 use flate2::bufread::GzDecoder;
 use lzzzz::lz4f::BufReadDecompressor;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
@@ -233,17 +234,19 @@ fn pure_search_contents_from_path(
     let reader = BufReader::new(contents_reader);
 
     let cb = match mode {
-        Mode::Provides => |_pkg: &str, file: &str, query: &str| file.contains(query),
-        Mode::Files => |pkg: &str, _file: &str, query: &str| pkg == query,
-        Mode::BinProvides => |_pkg: &str, file: &str, query: &str| {
-            file.contains(query) && file.starts_with(BIN_PREFIX)
+        Mode::Provides => |_pkg: &str, file: &str, ac: &AhoCorasick| ac.is_match(file),
+        Mode::Files => |pkg: &str, _file: &str, ac: &AhoCorasick| {
+            ac.find(pkg).is_some_and(|mat| mat.len() == pkg.len())
         },
-        Mode::BinFiles => {
-            |pkg: &str, file: &str, query: &str| pkg == query && file.starts_with(BIN_PREFIX)
-        }
+        Mode::BinProvides => |_pkg: &str, file: &str, ac: &AhoCorasick| {
+            ac.is_match(file) && file.starts_with(BIN_PREFIX)
+        },
+        Mode::BinFiles => |pkg: &str, file: &str, ac: &AhoCorasick| {
+            ac.find(pkg).is_some_and(|mat| mat.len() == pkg.len()) && file.starts_with(BIN_PREFIX)
+        },
     };
 
-    let res = pure_search_foreach_result(cb, reader, count, query);
+    let res = pure_search_foreach_result(cb, reader, count, query)?;
 
     Ok(res)
 }
@@ -262,13 +265,14 @@ fn check_file_magic_4bytes(
 }
 
 fn pure_search_foreach_result(
-    cb: impl Fn(&str, &str, &str) -> bool,
+    cb: impl Fn(&str, &str, &AhoCorasick) -> bool,
     mut reader: BufReader<&mut dyn Read>,
     count: Arc<AtomicUsize>,
     query: &str,
-) -> Vec<(String, String)> {
+) -> Result<Vec<(String, String)>, OmaContentsError> {
     let mut res = vec![];
 
+    let ac = AhoCorasick::new(vec![query])?;
     let mut buffer = String::new();
 
     while reader.read_line(&mut buffer).is_ok_and(|x| x > 0) {
@@ -278,7 +282,7 @@ fn pure_search_foreach_result(
         };
 
         for (_, pkg) in pkgs {
-            if cb(pkg, file, query) {
+            if cb(pkg, file, &ac) {
                 count.fetch_add(1, Ordering::SeqCst);
                 let line = (pkg.to_string(), prefix(file));
                 if !res.contains(&line) {
@@ -290,7 +294,7 @@ fn pure_search_foreach_result(
         buffer.clear();
     }
 
-    res
+    Ok(res)
 }
 
 fn rg_filter_line(mut line: &str, is_list: bool, query: &str) -> Option<(String, String)> {
