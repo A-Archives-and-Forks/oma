@@ -634,6 +634,12 @@ fn run_subcmd(matches: ArgMatches, dry_run: bool, no_progress: bool) -> Result<i
             no_check_dbus,
             another_apt_options: oma_args.another_apt_options,
         })?,
+        Some(("mirror", args)) => mirror::tui(
+            no_progress,
+            !args.get_flag("no_refresh_topics"),
+            oma_args.network_thread,
+            args.get_flag("no_refresh"),
+        )?,
         Some((cmd, args)) => {
             let exe_dir = PathBuf::from("/usr/libexec");
             let plugin = exe_dir.join(format!("oma-{}", cmd));

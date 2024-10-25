@@ -19,7 +19,7 @@ struct Branch {
     suites: Vec<Box<str>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Mirror {
     pub desc: Box<str>,
     pub url: Box<str>,
@@ -33,9 +33,14 @@ pub enum MirrorError {
         source: io::Error,
     },
     #[snafu(display("Failed to parse file: {}", path))]
-    Parse {
+    ParseJson {
         path: &'static str,
         source: serde_json::Error,
+    },
+    #[snafu(display("Failed to parse file: {}", path))]
+    ParseYaml {
+        path: &'static str,
+        source: serde_yaml::Error,
     },
     #[snafu(display("mirror does not exist in mirrors file: {mirror_name}"))]
     MirrorNotExist { mirror_name: Box<str> },
@@ -60,13 +65,14 @@ impl MirrorManager {
     // const BRANCHES_FILE: &'static str = "/usr/share/distro-repository-data/branches.yml";
     // const COMPS_FILE: &'static str = "/usr/share/distro-repository-data/comps.yml";
     const MIRRORS_FILE: &'static str = "/usr/share/distro-repository-data/mirrors.yml";
+    const APT_STATUS_FILE: &'static str = "/etc/apt/sources.list";
 
     pub fn new() -> Result<Self, MirrorError> {
         let f = fs::read(Self::STATUS_FILE).context(ReadFileSnafu {
             path: Self::STATUS_FILE,
         })?;
 
-        let status: Status = serde_json::from_slice(&f).context(ParseSnafu {
+        let status: Status = serde_json::from_slice(&f).context(ParseJsonSnafu {
             path: Self::STATUS_FILE,
         })?;
 
@@ -127,7 +133,7 @@ impl MirrorManager {
                 })?;
 
                 let mirrors: HashMap<Box<str>, Mirror> =
-                    serde_json::from_slice(&f).context(ParseSnafu {
+                    serde_yaml::from_slice(&f).context(ParseYamlSnafu {
                         path: Self::MIRRORS_FILE,
                     })?;
 
@@ -135,15 +141,23 @@ impl MirrorManager {
             })
     }
 
-    pub fn set(&mut self, mirror_name: &str) -> Result<bool, MirrorError> {
-        if self.status.mirror.contains_key(mirror_name) {
-            return Ok(false);
+    pub fn set(&mut self, mirror_names: &[&str]) -> Result<(), MirrorError> {
+        let mirrors = self.try_mirrors()?;
+
+        for i in mirror_names {
+            if !mirrors.contains_key(*i) {
+                return Err(MirrorError::MirrorNotExist {
+                    mirror_name: Box::from(*i),
+                });
+            }
         }
 
         self.status.mirror.clear();
-        let res = self.add(mirror_name)?;
+        for i in mirror_names {
+            self.add(i)?;
+        }
 
-        Ok(res)
+        Ok(())
     }
 
     pub fn add(&mut self, mirror_name: &str) -> Result<bool, MirrorError> {
@@ -212,18 +226,29 @@ impl MirrorManager {
 
         let mut result = String::new();
 
-        let tips = custom_mirror_tips.unwrap_or("Generate by oma-mirror, DO NOT EDIT!");
+        let tips = custom_mirror_tips.unwrap_or("# Generate by oma-mirror, DO NOT EDIT!");
         result.push_str(tips);
         result.push('\n');
 
         for (_, url) in &self.status.mirror {
             result.push_str("deb ");
             result.push_str(&url);
+
+            if !url.ends_with('/') {
+                result.push('/');
+            }
+
+            result.push_str("debs");
             result.push(' ');
             result.push_str(&self.status.branch);
+            result.push(' ');
             result.push_str(&self.status.component.join(" "));
             result.push('\n');
         }
+
+        fs::write(Self::APT_STATUS_FILE, result).context(WriteFileSnafu {
+            path: Self::APT_STATUS_FILE,
+        })?;
 
         Ok(())
     }

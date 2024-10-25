@@ -181,7 +181,11 @@ impl From<MirrorError> for OutputError {
                 description: fl!("failed-to-operate-path", p = path),
                 source: Some(Box::new(source)),
             },
-            MirrorError::Parse { path, source } => Self {
+            MirrorError::ParseJson { path, source } => Self {
+                description: format!("Failed to parse file: {}", path),
+                source: Some(Box::new(source)),
+            },
+            MirrorError::ParseYaml { path, source } => Self {
                 description: format!("Failed to parse file: {}", path),
                 source: Some(Box::new(source)),
             },

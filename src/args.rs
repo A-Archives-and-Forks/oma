@@ -332,7 +332,7 @@ pub fn command_builder() -> Command {
                         .num_args(0..=1)
                         .required(true),
                 )
-                .arg(no_refresh.requires("package"))
+                .arg(no_refresh.clone().requires("package"))
                 .arg(&dry_run);
 
             if cfg!(feature = "aosc") {
@@ -489,7 +489,12 @@ pub fn command_builder() -> Command {
                         .num_args(1..),
                 )
                 .arg(&dry_run)
-        );
+        ).subcommand(
+            Command::new("mirror")
+                    .about("Manage Mirrors enrollment")
+                    .arg(no_refresh_topics)
+                    .arg(no_refresh)
+        )
     }
 
     cmd
